@@ -7,21 +7,78 @@
 # performs a simple device inquiry, followed by a remote name request of each
 # discovered device
 
+
+# TODO(adamf) make sure all sizes in the struct.pack() calls match the correct types in hci.h
+# and that we're not padding with 0x0 when we should be using an unsigned short
+
+# NOTE: Python's struct.pack() will add padding bytes unless you make the endianness explicit. Little endian
+# should be used for BLE. Always start a struct.pack() format string with "<"
+
 import os
 import sys
 import struct
 import bluetooth._bluetooth as bluez
 
+LE_PUBLIC_ADDRESS=0x00
+LE_RANDOM_ADDRESS=0x01
 LE_SET_SCAN_PARAMETERS_CP_SIZE=7
 OGF_LE_CTL=0x08
 OCF_LE_SET_SCAN_PARAMETERS=0x000B
-OCF_LE_SET_SCAN_ENABLE =0x000C
+OCF_LE_SET_SCAN_ENABLE=0x000C
+OCF_LE_CREATE_CONN=0x000D
 
 def printpacket(pkt):
     for c in pkt:
         sys.stdout.write("%02x " % struct.unpack("B",c)[0])
     print 
 
+def get_packed_bdaddr(bdaddr_string):
+    packable_addr = []
+    addr = bdaddr_string.split(':')
+    addr.reverse()
+    for b in addr: 
+        packable_addr.append(int(b, 16))
+    return struct.pack("<BBBBBB", *packable_addr)
+    
+def hci_connect_le(sock, peer_bdaddr, interval=0x0004, window=0x004,
+                   initiator_filter=0x0, peer_bdaddr_type=LE_PUBLIC_ADDRESS, 
+                   own_bdaddr_type=0x00, min_interval=0x000F, max_interval=0x000F,
+                   latency=0x0000, supervision_timeout=0x0C80, min_ce_length=0x0001,
+                   max_ce_length=0x0001):
+
+#    interval = htobs(0x0004);
+#        window = htobs(0x0004);
+#        own_bdaddr_type = 0x00;
+#        min_interval = htobs(0x000F);
+#        max_interval = htobs(0x000F);
+#        latency = htobs(0x0000);
+#        supervision_timeout = htobs(0x0C80);
+#        min_ce_length = htobs(0x0001);
+#        max_ce_length = htobs(0x0001);
+#
+#        err = hci_le_create_conn(dd, interval, window, initiator_filter,
+#                        peer_bdaddr_type, bdaddr, own_bdaddr_type, min_interval,
+#                        max_interval, latency, supervision_timeout,
+#                        min_ce_length, max_ce_length, &handle, 25000);
+# uint16_t        interval;
+#        uint16_t        window;
+#        uint8_t         initiator_filter;
+#        uint8_t         peer_bdaddr_type;
+#        bdaddr_t        peer_bdaddr;
+#        uint8_t         own_bdaddr_type;
+#        uint16_t        min_interval;
+#        uint16_t        max_interval;
+#        uint16_t        latency;
+#        uint16_t        supervision_timeout;
+#        uint16_t        min_ce_length;
+#        uint16_t        max_ce_length;    
+    package_bdaddr = get_packed_bdaddr(peer_bdaddr)
+    cmd_pkt = struct.pack("<HHBB", interval, window, initiator_filter, peer_bdaddr_type)
+    cmd_pkt = cmd_pkt + package_bdaddr
+    cmd_pkt = cmd_pkt + struct.pack("<BHHHHHH", own_bdaddr_type, min_interval, max_interval, latency,
+                                     supervision_timeout, min_ce_length, max_ce_length)
+    bluez.hci_send_cmd(sock, OGF_LE_CTL, OCF_LE_CREATE_CONN, cmd_pkt)
+        
 
 def hci_enable_le_scan(sock):
     hci_toggle_le_scan(sock, 0x01)
@@ -48,7 +105,7 @@ def hci_toggle_le_scan(sock, enable):
 
 #        if (hci_send_req(dd, &rq, to) < 0)
 #                return -1;
-    cmd_pkt = struct.pack("BB", enable, 0x00)
+    cmd_pkt = struct.pack("<BB", enable, 0x00)
     bluez.hci_send_cmd(sock, OGF_LE_CTL, OCF_LE_SET_SCAN_ENABLE, cmd_pkt)
     print "sent toggle enable"
 
@@ -96,7 +153,7 @@ def hci_le_set_scan_parameters(sock):
     WINDOW = 0x10
     FILTER = 0x00 # all advertisements, not just whitelisted devices
     # interval and window are uint_16, so we pad them with 0x0
-    cmd_pkt = struct.pack("BBBBBBB", SCAN_TYPE, 0x0, INTERVAL, 0x0, WINDOW, OWN_TYPE, FILTER)
+    cmd_pkt = struct.pack("<BBBBBBB", SCAN_TYPE, 0x0, INTERVAL, 0x0, WINDOW, OWN_TYPE, FILTER)
     print "packed up: ", cmd_pkt
     bluez.hci_send_cmd(sock, OGF_LE_CTL, OCF_LE_SET_SCAN_PARAMETERS, cmd_pkt)
     print "sent scan parameters command"
@@ -122,9 +179,8 @@ def device_inquiry_with_with_rssi(sock):
 
     duration = 4
     max_responses = 255
-    cmd_pkt = struct.pack("BBBBB", 0x33, 0x8b, 0x9e, duration, max_responses)
+    cmd_pkt = struct.pack("<BBBBB", 0x33, 0x8b, 0x9e, duration, max_responses)
     bluez.hci_send_cmd(sock, bluez.OGF_LINK_CTL, bluez.OCF_INQUIRY, cmd_pkt)
-    print "sent unknown packets"
 
     results = []
 
@@ -149,7 +205,6 @@ def device_inquiry_with_with_rssi(sock):
                 rssi = struct.unpack("b", pkt[1+13*nrsp+i])[0]
                 results.append( ( addr, rssi ) )
                 print "[%s] RSSI: [%d]" % (addr, rssi)
-                print "packet:", pkt
         elif event == bluez.EVT_INQUIRY_COMPLETE:
             done = True
         elif event == bluez.EVT_CMD_STATUS:
@@ -165,7 +220,13 @@ def device_inquiry_with_with_rssi(sock):
                 addr = bluez.ba2str( pkt[1+6*i:1+6*i+6] )
                 results.append( ( addr, -1 ) )
                 print "[%s] (no RRSI)" % addr
+        elif event == bluez.EVT_CMD_COMPLETE:
+            ncmd, opcode = struct.unpack("BB", pkt[4:6])
+            printpacket(pkt[4:7])
+            print "command complete: cmd: 0x%02x opcode: 0x%02x" % (ncmd, opcode)
         else:
+            print "unknown packet, event 0x%02x " % event
+            printpacket(pkt)
             print "unrecognized packet type 0x%02x" % ptype
 	    print "event ", event
 
@@ -186,4 +247,5 @@ hci_le_set_scan_parameters(sock)
 hci_enable_le_scan(sock)
 device_inquiry_with_with_rssi(sock)
 hci_disable_le_scan(sock)
+hci_connect_le(sock, "09:09:19:E5:E2:4A")
 
