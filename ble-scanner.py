@@ -1,5 +1,9 @@
 # BLE scanner, based on https://code.google.com/p/pybluez/source/browse/trunk/examples/advanced/inquiry-with-rssi.py
 
+# https://github.com/pauloborges/bluez/blob/master/tools/hcitool.c for lescan
+# https://kernel.googlesource.com/pub/scm/bluetooth/bluez/+/5.6/lib/hci.h for opcodes
+# https://github.com/pauloborges/bluez/blob/master/lib/hci.c#L2782 for functions used by lescan
+
 # performs a simple device inquiry, followed by a remote name request of each
 # discovered device
 
