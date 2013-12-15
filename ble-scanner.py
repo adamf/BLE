@@ -27,6 +27,12 @@ OCF_LE_SET_SCAN_PARAMETERS=0x000B
 OCF_LE_SET_SCAN_ENABLE=0x000C
 OCF_LE_CREATE_CONN=0x000D
 
+# these are actually subevents of LE_META_EVENT
+EVT_LE_CONN_COMPLETE=0x01
+EVT_LE_ADVERTISING_REPORT=0x02
+EVT_LE_CONN_UPDATE_COMPLETE=0x03
+EVT_LE_READ_REMOTE_USED_FEATURES_COMPLETE=0x04
+
 def printpacket(pkt):
     for c in pkt:
         sys.stdout.write("%02x " % struct.unpack("B",c)[0])
@@ -39,9 +45,14 @@ def get_packed_bdaddr(bdaddr_string):
     for b in addr: 
         packable_addr.append(int(b, 16))
     return struct.pack("<BBBBBB", *packable_addr)
+
+
+# BLE and bluetooth use the same disconnect command.
+#def hci_disconnect(sock, reason=bluez.HCI_OE_USER_ENDED_CONNECTION):
+#    pass
     
 def hci_connect_le(sock, peer_bdaddr, interval=0x0004, window=0x004,
-                   initiator_filter=0x0, peer_bdaddr_type=LE_PUBLIC_ADDRESS, 
+                   initiator_filter=0x0, peer_bdaddr_type=LE_RANDOM_ADDRESS, 
                    own_bdaddr_type=0x00, min_interval=0x000F, max_interval=0x000F,
                    latency=0x0000, supervision_timeout=0x0C80, min_ce_length=0x0001,
                    max_ce_length=0x0001):
@@ -198,6 +209,23 @@ def device_inquiry_with_with_rssi(sock):
                 results.append( ( addr, rssi ) )
                 print "[%s] RSSI: [%d]" % (addr, rssi)
         elif event == LE_META_EVENT:
+            print "LE META EVENT"
+            subevent, = struct.unpack("B", pkt[3])
+            print "subevent: 0x%02x" % subevent
+            if subevent == EVT_LE_CONN_COMPLETE:
+                print "connection complete"
+                le_handle_connectioin_complete(pkt)
+                printpacket(pkt)
+            elif subevent == EVT_LE_ADVERTISING_REPORT:
+                print "advertising report"
+                printpacket(pkt)
+            elif subevent == EVT_LE_CONN_UPDATE_COMPLETE:
+                print "connection updated"
+                printpacket(pkt)
+            elif subevent == EVT_LE_READ_REMOTE_USED_FEATURES_COMPLETE:
+                print "read remote used features complete"
+            else:
+                print "unknown subevent"
             pkt = pkt[3:]
             nrsp = struct.unpack("B", pkt[0])[0]
             for i in range(nrsp):
@@ -236,6 +264,18 @@ def device_inquiry_with_with_rssi(sock):
 
     return results
 
+def le_handle_connectioin_complete(pkt):
+    printpacket(pkt)
+    pkt = pkt[4:]
+    printpacket(pkt)
+    printpacket(pkt[0:5])
+    status, handle, role, peer_bdaddr_type = struct.unpack("<BHBB", pkt[0:5])
+    print len(pkt[11:])
+    interval, latency, supervision_timeout, master_clock_accuracy = struct.unpack("<HHHB", pkt[11:])
+    print "status: 0x%02x\nhandle: 0x%02x" % (status, handle)
+    print "role: 0x%02x\n" % role
+    #print role, peer_bdaddr_type, interval, latency, supervision_timeout, master_clock_accuracy
+
 dev_id = 0
 try:
     sock = bluez.hci_open_dev(dev_id)
@@ -243,9 +283,9 @@ except:
     print "error accessing bluetooth device..."
     sys.exit(1)
 
-hci_le_set_scan_parameters(sock)
-hci_enable_le_scan(sock)
+#hci_le_set_scan_parameters(sock)
+#hci_enable_le_scan(sock)
+#hci_disable_le_scan(sock)
+hci_connect_le(sock, "FA:D1:A4:C3:75:9B")
 device_inquiry_with_with_rssi(sock)
-hci_disable_le_scan(sock)
-hci_connect_le(sock, "09:09:19:E5:E2:4A")
 
