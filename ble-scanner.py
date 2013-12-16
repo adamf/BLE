@@ -46,6 +46,8 @@ def get_packed_bdaddr(bdaddr_string):
         packable_addr.append(int(b, 16))
     return struct.pack("<BBBBBB", *packable_addr)
 
+def packed_bdaddr_to_string(bdaddr_packed):
+    return ':'.join('%02x'%i for i in struct.unpack("<BBBBBB", bdaddr_packed[::-1]))
 
 # BLE and bluetooth use the same disconnect command.
 #def hci_disconnect(sock, reason=bluez.HCI_OE_USER_ENDED_CONNECTION):
@@ -207,18 +209,41 @@ def device_inquiry_with_with_rssi(sock):
                 addr = bluez.ba2str( pkt[1+6*i:1+6*i+6] )
                 rssi = struct.unpack("b", pkt[1+13*nrsp+i])[0]
                 results.append( ( addr, rssi ) )
-                print "[%s] RSSI: [%d]" % (addr, rssi)
+                print "Inquiry: [%s] RSSI: [%d]" % (addr, rssi)
+#                if addr == sys.argv[1] and abs(rssi) > 100:
+#                    pass
         elif event == LE_META_EVENT:
+	    print "--------------"
             print "LE META EVENT"
             subevent, = struct.unpack("B", pkt[3])
             print "subevent: 0x%02x" % subevent
             if subevent == EVT_LE_CONN_COMPLETE:
                 print "connection complete"
-                le_handle_connectioin_complete(pkt)
+                le_handle_connection_complete(pkt)
                 printpacket(pkt)
             elif subevent == EVT_LE_ADVERTISING_REPORT:
                 print "advertising report"
-                printpacket(pkt)
+                pkt = pkt[4:]
+                advertising_evt_info = struct.unpack("B", pkt[0])[0]
+                bdaddr_type = struct.unpack("B", pkt[1])[0]
+		print "advertising event: 0x%02x" % advertising_evt_info
+		print "bdaddr_type: 0x%02x" % bdaddr_type
+		print "device address: ", packed_bdaddr_to_string(pkt[3:9])
+		advertising_data_length, = struct.unpack("B", pkt[10])
+		print "advertising packet metadata length: ", advertising_data_length
+		local_name_len, = struct.unpack("B", pkt[11])
+		name = struct.unpack(local_name_len*"B", pkt[12:12+ local_name_len])
+		print "name: ", pkt[12:12+local_name_len]
+
+		rssi, = struct.unpack("b", pkt[-1])
+		print "RSSI: ", rssi
+
+                #for i in range(nrsp):
+                #    addr = bluez.ba2str( pkt[1+6*i:1+6*i+6] )
+                #    rssi = struct.unpack("b", pkt[1+13*nrsp+i])[0]
+                #    results.append( ( addr, rssi ) )
+                #    print "Meta: [%s] RSSI: [%d]" % (addr, rssi)
+    
             elif subevent == EVT_LE_CONN_UPDATE_COMPLETE:
                 print "connection updated"
                 printpacket(pkt)
@@ -226,13 +251,7 @@ def device_inquiry_with_with_rssi(sock):
                 print "read remote used features complete"
             else:
                 print "unknown subevent"
-            pkt = pkt[3:]
-            nrsp = struct.unpack("B", pkt[0])[0]
-            for i in range(nrsp):
-                addr = bluez.ba2str( pkt[1+6*i:1+6*i+6] )
-                rssi = struct.unpack("b", pkt[1+13*nrsp+i])[0]
-                results.append( ( addr, rssi ) )
-                print "[%s] RSSI: [%d]" % (addr, rssi)
+
         elif event == bluez.EVT_INQUIRY_COMPLETE:
             done = True
         elif event == bluez.EVT_CMD_STATUS:
@@ -247,14 +266,13 @@ def device_inquiry_with_with_rssi(sock):
             for i in range(nrsp):
                 addr = bluez.ba2str( pkt[1+6*i:1+6*i+6] )
                 results.append( ( addr, -1 ) )
-                print "[%s] (no RRSI)" % addr
+                print "[%s] (no RSSI)" % (addr,)
         elif event == bluez.EVT_CMD_COMPLETE:
             ncmd, opcode = struct.unpack("BB", pkt[4:6])
             printpacket(pkt[4:7])
             print "command complete: cmd: 0x%02x opcode: 0x%02x" % (ncmd, opcode)
         else:
             print "unknown packet, event 0x%02x " % event
-            printpacket(pkt)
             print "unrecognized packet type 0x%02x" % ptype
 	    print "event ", event
 
@@ -264,7 +282,7 @@ def device_inquiry_with_with_rssi(sock):
 
     return results
 
-def le_handle_connectioin_complete(pkt):
+def le_handle_connection_complete(pkt):
     printpacket(pkt)
     pkt = pkt[4:]
     printpacket(pkt)
@@ -283,9 +301,9 @@ except:
     print "error accessing bluetooth device..."
     sys.exit(1)
 
-#hci_le_set_scan_parameters(sock)
-#hci_enable_le_scan(sock)
-#hci_disable_le_scan(sock)
-hci_connect_le(sock, "FA:D1:A4:C3:75:9B")
+hci_le_set_scan_parameters(sock)
+hci_enable_le_scan(sock)
 device_inquiry_with_with_rssi(sock)
+hci_disable_le_scan(sock)
+#hci_connect_le(sock, sys.argv[1])
 
