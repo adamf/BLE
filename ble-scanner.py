@@ -28,6 +28,9 @@ OCF_LE_SET_SCAN_PARAMETERS=0x000B
 OCF_LE_SET_SCAN_ENABLE=0x000C
 OCF_LE_CREATE_CONN=0x000D
 
+LE_ROLE_MASTER = 0x00
+LE_ROLE_SLAVE = 0x01
+
 # these are actually subevents of LE_META_EVENT
 EVT_LE_CONN_COMPLETE=0x01
 EVT_LE_ADVERTISING_REPORT=0x02
@@ -211,6 +214,21 @@ def parse_events(sock, loop_count=100):
                 rssi = struct.unpack("b", pkt[1+13*nrsp+i])[0]
                 results.append( ( addr, rssi ) )
                 print "Inquiry: [%s] RSSI: [%d]" % (addr, rssi)
+        elif event == bluez.EVT_NUM_COMP_PKTS:
+            print "num completed packets"
+            pkt = pkt[3:]
+            num_connection_handles = struct.unpack("B", pkt[0])[0]
+            pkt = pkt[1:]
+            print "handles:", num_connection_handles
+            for i in range(0, num_connection_handles):
+                handle, = struct.unpack("H", pkt[0:2])
+                completed_packets, = struct.unpack("H", pkt[2:4])
+                print "\thandle: 0x%04x completed packets: 0x%04x" % (handle, completed_packets)
+                pkt = pkt[4:]
+        elif event == bluez.EVT_DISCONN_COMPLETE:
+            pkt = pkt[3:]
+            status, handle, reason = struct.unpack("<BHB", pkt)
+            print "Disconnected, status: 0x%02x handle: 0x%04x reason: 0x%02x" % (status, handle, reason)
         elif event == LE_META_EVENT:
             subevent, = struct.unpack("B", pkt[3])
             pkt = pkt[4:]
@@ -271,7 +289,7 @@ def parse_events(sock, loop_count=100):
         elif event == bluez.EVT_INQUIRY_COMPLETE:
             print "device inquiry complete"
         elif event == bluez.EVT_CMD_STATUS:
-            status, ncmd, opcode = struct.unpack("BBH", pkt[3:7])
+            status, ncmd, opcode = struct.unpack("<BBH", pkt[3:7])
             if status != 0:
                 print "uh oh..."
                 printpacket(pkt[3:7])
@@ -293,16 +311,12 @@ def parse_events(sock, loop_count=100):
     sock.setsockopt( bluez.SOL_HCI, bluez.HCI_FILTER, old_filter )
 
 def le_handle_connection_complete(pkt):
-    printpacket(pkt)
-    pkt = pkt[4:]
-    printpacket(pkt)
-    printpacket(pkt[0:5])
     status, handle, role, peer_bdaddr_type = struct.unpack("<BHBB", pkt[0:5])
-    print len(pkt[11:])
+    device_address = packed_bdaddr_to_string(pkt[5:11])
     interval, latency, supervision_timeout, master_clock_accuracy = struct.unpack("<HHHB", pkt[11:])
-    print "status: 0x%02x\nhandle: 0x%02x" % (status, handle)
-    print "role: 0x%02x\n" % role
-    #print role, peer_bdaddr_type, interval, latency, supervision_timeout, master_clock_accuracy
+    print "status: 0x%02x\nhandle: 0x%04x" % (status, handle)
+    print "role: 0x%02x" % role
+    print "device address: ", device_address
 
 dev_id = 0
 try:
@@ -311,9 +325,8 @@ except:
     print "error accessing bluetooth device..."
     sys.exit(1)
 
-hci_le_set_scan_parameters(sock)
-hci_enable_le_scan(sock)
+#hci_le_set_scan_parameters(sock)
+#hci_enable_le_scan(sock)
+#hci_disable_le_scan(sock)
+hci_connect_le(sock, "e5:e2:4a:56:53:54")
 parse_events(sock)
-hci_disable_le_scan(sock)
-#hci_connect_le(sock, sys.argv[1])
-
